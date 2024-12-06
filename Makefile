@@ -5,20 +5,22 @@ all-fast: build init fixtures run clean
 no-build: init fixtures run clean
 
 build-no-cache:
-	docker build --no-cache -t $(NAME) .
+	podman build --no-cache -t $(NAME) .
 
 build:
-	docker build -t $(NAME) .
+	podman build -t $(NAME) .
 
 init:
-	-docker rm -f \
+	-podman rm -f \
 		mariadb postgres redis openldap \
 		mailserver_default mailserver_reverse mailserver_ecdsa mailserver_ldap mailserver_ldap2 \
-		mailserver_traefik_acmev1 mailserver_traefik_acmev2
+		mailserver_traefik_acmev1 mailserver_traefik_acmev
+
+	podman network rm test-network
 
 	sleep 2
 
-	docker run \
+	podman run \
 		-d \
 		--name mariadb \
 		-e MYSQL_RANDOM_ROOT_PASSWORD=yes \
@@ -27,9 +29,9 @@ init:
 		-e MYSQL_PASSWORD=testpasswd \
 		-v "`pwd`/test/config/mariadb/struct.sql":/docker-entrypoint-initdb.d/struct.sql \
 		-v "`pwd`/test/config/mariadb/bind.cnf":/etc/mysql/conf.d/bind.cnf \
-		-t mysql:5.7
+		-t mariadb:10.2
 
-	docker run \
+	podman run \
 		-d \
 		--name postgres \
 		-e POSTGRES_DB=postfix \
@@ -38,12 +40,12 @@ init:
 		-v "`pwd`/test/config/postgres":/docker-entrypoint-initdb.d \
 		-t postgres:10.5-alpine
 
-	docker run \
+	podman run \
 		-d \
 		--name redis \
 		-t redis:4.0-alpine
 
-	docker run \
+	podman run \
 		-d \
 		--name openldap \
 		-e LDAP_ORGANISATION="Test LDAP" \
@@ -55,11 +57,12 @@ init:
 
 	sleep 10
 
-	docker run \
+	podman network create test-network
+
+	podman run \
 		-d \
 		--name mailserver_default \
-		--link mariadb:mariadb \
-		--link redis:redis \
+		--network test-network \
 		-e DBPASS=testpasswd \
 		-e RSPAMD_PASSWORD=testpasswd \
 		-e VMAILUID=`id -u` \
@@ -76,11 +79,10 @@ init:
 		-h mail.domain.tld \
 		-t $(NAME)
 
-	docker run \
+	podman run \
 		-d \
 		--name mailserver_reverse \
-		--link postgres:postgres \
-		--link redis:redis \
+		--network test-network \
 		-e FQDN=mail.domain.tld \
 		-e DOMAIN=domain.tld \
 		-e DBDRIVER=pgsql \
@@ -113,11 +115,10 @@ init:
 		-v "`pwd`/test/share/letsencrypt":/etc/letsencrypt \
 		-t $(NAME)
 
-	docker run \
+	podman run \
 		-d \
 		--name mailserver_ldap \
-		--link openldap \
-		--link redis:redis \
+		--network test-network \
 		-e DBDRIVER=ldap \
 		-e DBHOST=openldap \
 		-e DBPORT=389 \
@@ -159,11 +160,10 @@ init:
 		-h mail.domain.tld \
 		-t $(NAME)
 
-	docker run \
+	podman run \
 		-d \
 		--name mailserver_ldap2 \
-		--link openldap \
-		--link redis:redis \
+		--network test-network \
 		-e DBDRIVER=ldap \
 		-e DBHOST=openldap \
 		-e DBPORT=389 \
@@ -210,11 +210,10 @@ init:
 		-h mail.domain.tld \
 		-t $(NAME)
 
-	docker run \
+	podman run \
 		-d \
 		--name mailserver_ecdsa \
-		--link mariadb:mariadb \
-		--link redis:redis \
+		--network test-network \
 		-e DBPASS=testpasswd \
 		-e RSPAMD_PASSWORD=testpasswd \
 		-e VMAILUID=`id -u` \
@@ -228,11 +227,10 @@ init:
 		-h mail.domain.tld \
 		-t $(NAME)
 
-	docker run \
+	podman run \
 		-d \
 		--name mailserver_traefik_acmev1 \
-		--link mariadb:mariadb \
-		--link redis:redis \
+		--network test-network \
 		-e DEBUG_MODE=dovecot,postfix \
 		-e DBPASS=testpasswd \
 		-e RSPAMD_PASSWORD=testpasswd \
@@ -244,11 +242,10 @@ init:
 		-h mail.domain.tld \
 		-t $(NAME)
 
-	docker run \
+	podman run \
 		-d \
 		--name mailserver_traefik_acmev2 \
-		--link mariadb:mariadb \
-		--link redis:redis \
+		--network test-network \
 		-e DEBUG_MODE=true \
 		-e DBPASS=testpasswd \
 		-e RSPAMD_PASSWORD=testpasswd \
@@ -263,55 +260,55 @@ init:
 fixtures:
 
 	# Wait for clamav unofficial sigs database update (default)
-	docker exec mailserver_default /bin/sh -c "while [ -f /var/lib/clamav-unofficial-sigs/pid/clamav-unofficial-sigs.pid ] ; do sleep 1 ; done"
+	podman exec mailserver_default /bin/sh -c "while [ -f /var/lib/clamav-unofficial-sigs/pid/clamav-unofficial-sigs.pid ] ; do sleep 1 ; done"
 	# Wait for clamav load databases (default)
-	docker exec mailserver_default /bin/sh -c "while ! echo PING | nc -z 0.0.0.0 3310 ; do sleep 1 ; done"
+	podman exec mailserver_default /bin/sh -c "while ! echo PING | nc -z 0.0.0.0 3310 ; do sleep 1 ; done"
 
 	# Wait for clamav unofficial sigs database update (ldap)
-	docker exec mailserver_ldap /bin/sh -c "while [ -f /var/lib/clamav-unofficial-sigs/pid/clamav-unofficial-sigs.pid ] ; do sleep 1 ; done"
+	podman exec mailserver_ldap /bin/sh -c "while [ -f /var/lib/clamav-unofficial-sigs/pid/clamav-unofficial-sigs.pid ] ; do sleep 1 ; done"
 	# Wait for clamav load databases (ldap)
-	docker exec mailserver_ldap /bin/sh -c "while ! echo PING | nc -z 0.0.0.0 3310 ; do sleep 1 ; done"
+	podman exec mailserver_ldap /bin/sh -c "while ! echo PING | nc -z 0.0.0.0 3310 ; do sleep 1 ; done"
 
-	docker exec mailserver_default /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-user.txt"
-	docker exec mailserver_default /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-user-spam-learning.txt"
-	docker exec mailserver_default /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-valid-user-subaddress.txt"
-	docker exec mailserver_default /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-non-existing-user.txt"
-	docker exec mailserver_default /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-alias.txt"
-	docker exec mailserver_default /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-spam-to-existing-user.txt"
-	docker exec mailserver_default /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-virus-to-existing-user.txt"
-	docker exec mailserver_default /bin/sh -c "openssl s_client -ign_eof -connect 0.0.0.0:587 -starttls smtp < /tmp/tests/email-templates/internal-user-to-existing-user.txt"
-	docker exec mailserver_default /bin/sh -c "openssl s_client -ign_eof -connect 0.0.0.0:587 -starttls smtp < /tmp/tests/email-templates/internal-rejected-user-to-existing-user.txt"
+	podman exec mailserver_default /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-user.txt"
+	podman exec mailserver_default /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-user-spam-learning.txt"
+	podman exec mailserver_default /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-valid-user-subaddress.txt"
+	podman exec mailserver_default /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-non-existing-user.txt"
+	podman exec mailserver_default /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-alias.txt"
+	podman exec mailserver_default /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-spam-to-existing-user.txt"
+	podman exec mailserver_default /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-virus-to-existing-user.txt"
+	podman exec mailserver_default /bin/sh -c "openssl s_client -ign_eof -connect 0.0.0.0:587 -starttls smtp < /tmp/tests/email-templates/internal-user-to-existing-user.txt"
+	podman exec mailserver_default /bin/sh -c "openssl s_client -ign_eof -connect 0.0.0.0:587 -starttls smtp < /tmp/tests/email-templates/internal-rejected-user-to-existing-user.txt"
 
-	docker exec mailserver_reverse /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-user.txt"
-	docker exec mailserver_reverse /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-valid-user-subaddress-with-default-separator.txt"
-	docker exec mailserver_reverse /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-non-existing-user.txt"
-	docker exec mailserver_reverse /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-alias.txt"
-	docker exec mailserver_reverse /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-spam-to-existing-user.txt"
-	docker exec mailserver_reverse /bin/sh -c "openssl s_client -ign_eof -connect 0.0.0.0:587 -starttls smtp < /tmp/tests/email-templates/internal-user-to-existing-user.txt"
+	podman exec mailserver_reverse /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-user.txt"
+	podman exec mailserver_reverse /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-valid-user-subaddress-with-default-separator.txt"
+	podman exec mailserver_reverse /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-non-existing-user.txt"
+	podman exec mailserver_reverse /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-alias.txt"
+	podman exec mailserver_reverse /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-spam-to-existing-user.txt"
+	podman exec mailserver_reverse /bin/sh -c "openssl s_client -ign_eof -connect 0.0.0.0:587 -starttls smtp < /tmp/tests/email-templates/internal-user-to-existing-user.txt"
 
-	docker exec mailserver_ldap /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-user.txt"
-	docker exec mailserver_ldap /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-user-spam-learning.txt"
-	docker exec mailserver_ldap /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-valid-user-subaddress.txt"
-	docker exec mailserver_ldap /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-non-existing-user.txt"
-	docker exec mailserver_ldap /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-alias.txt"
-	docker exec mailserver_ldap /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-alias-forward.txt"
-	docker exec mailserver_ldap /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-alias-group.txt"
-	docker exec mailserver_ldap /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-spam-to-existing-user.txt"
-	docker exec mailserver_ldap /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-virus-to-existing-user.txt"
-	docker exec mailserver_ldap /bin/sh -c "openssl s_client -ign_eof -connect 0.0.0.0:587 -starttls smtp < /tmp/tests/email-templates/internal-user-to-existing-user.txt"
-	docker exec mailserver_ldap /bin/sh -c "openssl s_client -ign_eof -connect 0.0.0.0:587 -starttls smtp < /tmp/tests/email-templates/internal-rejected-user-to-existing-user.txt"
+	podman exec mailserver_ldap /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-user.txt"
+	podman exec mailserver_ldap /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-user-spam-learning.txt"
+	podman exec mailserver_ldap /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-valid-user-subaddress.txt"
+	podman exec mailserver_ldap /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-non-existing-user.txt"
+	podman exec mailserver_ldap /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-alias.txt"
+	podman exec mailserver_ldap /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-alias-forward.txt"
+	podman exec mailserver_ldap /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-alias-group.txt"
+	podman exec mailserver_ldap /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-spam-to-existing-user.txt"
+	podman exec mailserver_ldap /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-virus-to-existing-user.txt"
+	podman exec mailserver_ldap /bin/sh -c "openssl s_client -ign_eof -connect 0.0.0.0:587 -starttls smtp < /tmp/tests/email-templates/internal-user-to-existing-user.txt"
+	podman exec mailserver_ldap /bin/sh -c "openssl s_client -ign_eof -connect 0.0.0.0:587 -starttls smtp < /tmp/tests/email-templates/internal-rejected-user-to-existing-user.txt"
 
-	docker exec mailserver_ldap2 /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-user.txt"
-	docker exec mailserver_ldap2 /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-valid-user-subaddress.txt"
-	docker exec mailserver_ldap2 /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-non-existing-user.txt"
-	docker exec mailserver_ldap2 /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-alias.txt"
-	docker exec mailserver_ldap2 /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-alias-forward.txt"
-	docker exec mailserver_ldap2 /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-alias-group.txt"
-	docker exec mailserver_ldap2 /bin/sh -c "openssl s_client -ign_eof -connect 0.0.0.0:587 -starttls smtp < /tmp/tests/email-templates/internal-user-to-existing-user.txt"
+	podman exec mailserver_ldap2 /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-user.txt"
+	podman exec mailserver_ldap2 /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-valid-user-subaddress.txt"
+	podman exec mailserver_ldap2 /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-non-existing-user.txt"
+	podman exec mailserver_ldap2 /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-alias.txt"
+	podman exec mailserver_ldap2 /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-alias-forward.txt"
+	podman exec mailserver_ldap2 /bin/sh -c "nc 0.0.0.0 25 < /tmp/tests/email-templates/external-to-existing-alias-group.txt"
+	podman exec mailserver_ldap2 /bin/sh -c "openssl s_client -ign_eof -connect 0.0.0.0:587 -starttls smtp < /tmp/tests/email-templates/internal-user-to-existing-user.txt"
 
 	sleep 2
-	docker exec mailserver_default /bin/sh -c "openssl s_client -ign_eof -connect 0.0.0.0:993 < /tmp/tests/sieve/trigger-spam-ham-learning.txt"
-	docker exec mailserver_ldap /bin/sh -c "openssl s_client -ign_eof -connect 0.0.0.0:993 < /tmp/tests/sieve/trigger-spam-ham-learning.txt"
+	podman exec mailserver_default /bin/sh -c "openssl s_client -ign_eof -connect 0.0.0.0:993 < /tmp/tests/sieve/trigger-spam-ham-learning.txt"
+	podman exec mailserver_ldap /bin/sh -c "openssl s_client -ign_eof -connect 0.0.0.0:993 < /tmp/tests/sieve/trigger-spam-ham-learning.txt"
 
 	# Wait until all mails have been processed
 	sleep 10
@@ -320,5 +317,6 @@ run:
 	./test/bats/bin/bats test/tests.bats
 
 clean:
-	docker images --quiet --filter=dangling=true | xargs --no-run-if-empty docker rmi
-	docker volume ls -qf dangling=true | xargs -r docker volume rm
+	podman images --quiet --filter=dangling=true | xargs --no-run-if-empty podman rmi
+	podman volume ls -qf dangling=true | xargs -r podman volume rm
+	podman network rm test-network

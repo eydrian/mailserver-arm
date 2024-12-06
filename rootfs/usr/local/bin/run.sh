@@ -106,7 +106,7 @@ if [ $? -ne 0 ]; then
     echo "${IP} ${DBHOST}" >> /etc/hosts
   else
     echo "[ERROR] Container IP not found with embedded DNS server... Abort !"
-    echo "[ERROR] Check your DBHOST environment variable"
+    echo "[ERROR] Check your DBHOST: ${DBHOST} environment variable"
     exit 1
   fi
 else
@@ -138,6 +138,7 @@ certs_helper.sh update_certs
 
 # Make sure that configuration is only run once
 if [ ! -f "/etc/configuration_built" ]; then
+  echo "[INFO] Running Setup"
   touch "/etc/configuration_built"
   setup.sh
 fi
